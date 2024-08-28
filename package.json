@@ -99,6 +99,9 @@
       "ws": "^7.5.10"
     }
   },
+  "publishConfig": {
+    "access": "public"
+  },
   "directories": {
     "doc": "docs",
     "example": "example"
