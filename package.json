@@ -1,6 +1,6 @@
 {
   "name": "@zkp2p/reclaim-witness-sdk",
-  "version": "0.0.1",
+  "version": "0.0.2-rc2",
   "description": "The witness server securely intermediates internet data exchange, using TLS and zero-knowledge proofs to verify and sign user claims with minimal information disclosure.",
   "main": "lib/index",
   "scripts": {
@@ -75,7 +75,7 @@
     "https-proxy-agent": "^7.0.5",
     "jsdom": "^24.1.3",
     "jsonpath-plus": "^10.0.0",
-    "p-queue": "^8.0.1",
+    "p-queue": "^6.6.2",
     "pino": "^9.4.0",
     "protobufjs": "^7.4.0",
     "re2": "^1.21.4",
