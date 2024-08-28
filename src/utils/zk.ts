@@ -19,6 +19,7 @@ import { getPureCiphertext, getZkAlgorithmForCipherSuite } from './generics'
 import { logger as LOGGER } from './logger'
 import { isFullyRedacted, isRedactionCongruent, REDACTION_CHAR_CODE } from './redactions'
 import { executeWithRetries } from './retries'
+import PQueue = require('p-queue');
 
 type GenerateZKChunkProofOpts = {
 	key: Uint8Array
@@ -76,8 +77,7 @@ export async function makeZkProofGenerator(
 	}: PrepareZKProofsOpts
 ) {
 
-	const { default: PQueue } = await import('p-queue')
-	const zkQueue = new PQueue({
+	const zkQueue = new PQueue.default({
 		concurrency: zkProofConcurrency,
 		autoStart: true,
 	})
