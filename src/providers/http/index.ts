@@ -1,3 +1,4 @@
+import { utils } from 'ethers'
 import { concatenateUint8Arrays, strToUint8Array, TLSConnectionOptions } from '@reclaimprotocol/tls'
 import { base64 } from 'ethers/lib/utils'
 import { DEFAULT_HTTPS_PORT, RECLAIM_USER_AGENT } from 'src/config'
@@ -376,13 +377,7 @@ const HTTP_PROVIDER: Provider<'http'> = {
 			throw new Error('request body mismatch')
 		}
 
-		//remove asterisks to account for chunks in the middle of revealed strings
-		if(!secretParams) {
-			res = res.slice(bodyStart).replace(/(\*){3,}/g, '')
-		}
-
-
-		for(const { type, value, invert } of params.responseMatches || []) {
+		for(const { type, value, invert, hash } of params.responseMatches || []) {
 			const inv = Boolean(invert) // explicitly cast to boolean
 
 			switch (type) {
@@ -406,7 +401,13 @@ const HTTP_PROVIDER: Provider<'http'> = {
 						throw new Error(`Duplicate parameter ${paramName}`)
 					}
 
-					extractedParams[paramName] = groups[paramName]
+					if(hash) {
+						extractedParams[paramName] = utils.keccak256(
+							strToUint8Array(groups[paramName])
+						).toLowerCase()
+					} else {
+						extractedParams[paramName] = groups[paramName]
+					}
 				}
 
 				break
