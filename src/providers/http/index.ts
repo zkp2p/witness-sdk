@@ -1,3 +1,4 @@
+import { utils } from 'ethers'
 import { concatenateUint8Arrays, strToUint8Array, TLSConnectionOptions } from '@reclaimprotocol/tls'
 import { DEFAULT_HTTPS_PORT, RECLAIM_USER_AGENT } from '../../config'
 import { ArraySlice, Provider, ProviderParams, ProviderSecretParams } from '../../types'
@@ -333,7 +334,7 @@ const HTTP_PROVIDER: Provider<'http'> = {
 			throw new Error('request body mismatch')
 		}
 
-		for(const { type, value, invert } of params.responseMatches || []) {
+		for(const { type, value, invert, hash } of params.responseMatches || []) {
 			const inv = Boolean(invert) // explicitly cast to boolean
 
 			switch (type) {
@@ -353,7 +354,13 @@ const HTTP_PROVIDER: Provider<'http'> = {
 								throw new Error(`Duplicate parameter ${paramName}`)
 							}
 
-							extractedParams[paramName] = groups[paramName]
+							if(hash) {
+								extractedParams[paramName] = utils.keccak256(
+									strToUint8Array(groups[paramName])
+								).toLowerCase()
+							} else {
+								extractedParams[paramName] = groups[paramName]
+							}
 						}
 					}
 				}

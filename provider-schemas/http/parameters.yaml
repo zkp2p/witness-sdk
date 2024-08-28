@@ -98,6 +98,11 @@ properties:
           description: >-
             Inverses the matching logic.
             Fail when match is found and proceed otherwise
+        hash:
+          type: boolean
+          description: >-
+            If true, the response will be hashed and the hash will be used
+            in the witness
       additionalProperties: false
   responseRedactions:
     type: array
