@@ -1,6 +1,6 @@
 {
   "name": "@zkp2p/reclaim-witness-sdk",
-  "version": "0.0.2-rc2",
+  "version": "0.0.2-rc4",
   "description": "The witness server securely intermediates internet data exchange, using TLS and zero-knowledge proofs to verify and sign user claims with minimal information disclosure.",
   "main": "lib/index",
   "scripts": {
@@ -52,7 +52,7 @@
     "@bufbuild/protobuf": "^2.0.0",
     "@commitlint/cli": "^17.7.1",
     "@commitlint/config-conventional": "^17.7.0",
-    "@reclaimprotocol/circom-symmetric-crypto": "^1.1.1",
+    "@reclaimprotocol/circom-symmetric-crypto": "1.1.1",
     "@reclaimprotocol/tls": "^0.0.2",
     "ajv": "^8.17.1",
     "canonicalize": "^2.0.0",
