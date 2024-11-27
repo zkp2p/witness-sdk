@@ -1,5 +1,6 @@
 import { utils } from 'ethers'
 import { concatenateUint8Arrays, strToUint8Array, TLSConnectionOptions } from '@reclaimprotocol/tls'
+import { utils } from 'ethers'
 import { base64 } from 'ethers/lib/utils'
 import { DEFAULT_HTTPS_PORT, RECLAIM_USER_AGENT } from 'src/config'
 import {
@@ -375,6 +376,11 @@ const HTTP_PROVIDER: Provider<'http'> = {
 
 		if(paramBody.length > 0 && !matchRedactedStrings(paramBody, req.body)) {
 			throw new Error('request body mismatch')
+		}
+
+		//remove asterisks to account for chunks in the middle of revealed strings
+		if(!secretParams) {
+			res = res.slice(bodyStart).replace(/(\*){3,}/g, '')
 		}
 
 		for(const { type, value, invert, hash } of params.responseMatches || []) {
