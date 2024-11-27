@@ -1,5 +1,5 @@
-import { utils } from 'ethers'
 import { concatenateUint8Arrays, strToUint8Array, TLSConnectionOptions } from '@reclaimprotocol/tls'
+import { utils } from 'ethers'
 import { base64 } from 'ethers/lib/utils'
 import { DEFAULT_HTTPS_PORT, RECLAIM_USER_AGENT } from 'src/config'
 import {
