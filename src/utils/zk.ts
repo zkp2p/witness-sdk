@@ -23,6 +23,7 @@ import { AttestorError } from 'src/utils/error'
 import { getPureCiphertext, getRecordIV, getZkAlgorithmForCipherSuite, uint8ArrayToStr } from 'src/utils/generics'
 import { logger as LOGGER } from 'src/utils/logger'
 import { binaryHashToStr, isFullyRedacted, isRedactionCongruent, REDACTION_CHAR_CODE } from 'src/utils/redactions'
+import PQueue = require('p-queue');
 
 type GenerateZKChunkProofOpts = {
 	key: Uint8Array
@@ -88,8 +89,7 @@ export async function makeZkProofGenerator(
 	}: PrepareZKProofsOpts
 ) {
 
-	const { default: PQueue } = await import('p-queue')
-	const zkQueue = new PQueue({
+	const zkQueue = new PQueue.default({
 		concurrency: zkProofConcurrency,
 		autoStart: true,
 	})
