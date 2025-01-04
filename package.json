@@ -1,6 +1,6 @@
 {
   "name": "@zkp2p/reclaim-witness-sdk",
-  "version": "0.0.3-rc1",
+  "version": "4.0.0-rc1",
   "description": "",
   "main": "lib/index",
   "scripts": {

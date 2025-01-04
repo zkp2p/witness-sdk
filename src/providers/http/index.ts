@@ -1,4 +1,5 @@
 import { concatenateUint8Arrays, strToUint8Array, TLSConnectionOptions } from '@reclaimprotocol/tls'
+import { utils } from 'ethers'
 import { base64 } from 'ethers/lib/utils'
 import { DEFAULT_HTTPS_PORT, RECLAIM_USER_AGENT } from 'src/config'
 import {
@@ -329,7 +330,8 @@ const HTTP_PROVIDER: Provider<'http'> = {
 		}
 
 
-		for(const { type, value, invert } of params.responseMatches || []) {
+		for(const { type, value, invert, unsafeHash } of params.responseMatches || []) {
+			const convertedUnsafeHash = Boolean(unsafeHash)
 			const inv = Boolean(invert) // explicitly cast to boolean
 
 			switch (type) {
@@ -353,7 +355,11 @@ const HTTP_PROVIDER: Provider<'http'> = {
 						throw new Error(`Duplicate parameter ${paramName}`)
 					}
 
-					extractedParams[paramName] = groups[paramName]
+					if(convertedUnsafeHash) {
+						extractedParams[paramName] = utils.keccak256(strToUint8Array(groups[paramName]))
+					} else {
+						extractedParams[paramName] = groups[paramName]
+					}
 				}
 
 				break
