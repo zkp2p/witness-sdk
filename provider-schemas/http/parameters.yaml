@@ -98,7 +98,7 @@ properties:
           description: >-
             Inverses the matching logic.
             Fail when match is found and proceed otherwise
-        unsafeHash:
+        hash:
           type: boolean
           description: >-
             If true, the hash will be computed using a simple keccak256 hash which does not

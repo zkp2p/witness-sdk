@@ -330,7 +330,7 @@ const HTTP_PROVIDER: Provider<'http'> = {
 		}
 
 
-		for(const { type, value, invert, unsafeHash } of params.responseMatches || []) {
+		for(const { type, value, invert, hash: unsafeHash } of params.responseMatches || []) {
 			const convertedUnsafeHash = Boolean(unsafeHash)
 			const inv = Boolean(invert) // explicitly cast to boolean
 
