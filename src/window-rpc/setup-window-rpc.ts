@@ -2,12 +2,13 @@ import { uint8ArrayToStr } from '@reclaimprotocol/tls'
 import { ZKEngine } from '@reclaimprotocol/zk-symmetric-crypto'
 import { createClaimOnAvs } from 'src/avs/client/create-claim-on-avs'
 import { createClaimOnAttestor } from 'src/client'
+import { createClaimOnMechain } from 'src/mechain/client/create-claim-on-mechain'
 import { extractHTMLElement, extractJSONValueIndex, generateRequstAndResponseFromTranscript } from 'src/providers/http/utils'
 import { OPRFOperators, ProviderParams, ProviderSecretParams, ZKOperators } from 'src/types'
-import { makeLogger } from 'src/utils'
+import { logger as LOGGER, makeLogger } from 'src/utils'
 import { B64_JSON_REPLACER, B64_JSON_REVIVER } from 'src/utils/b64-json'
 import { Benchmark } from 'src/utils/benchmark'
-import { CommunicationBridge, RPCCreateClaimOptions, WindowRPCClient, WindowRPCErrorResponse, WindowRPCIncomingMsg, WindowRPCOutgoingMsg, WindowRPCResponse } from 'src/window-rpc/types'
+import { CommunicationBridge, CreateClaimResponse, RPCCreateClaimOptions, WindowRPCClient, WindowRPCErrorResponse, WindowRPCIncomingMsg, WindowRPCOutgoingMsg, WindowRPCResponse } from 'src/window-rpc/types'
 import { generateRpcRequestId, getCurrentMemoryUsage, getWsApiUrlFromLocation, mapToCreateClaimResponse, waitForResponse } from 'src/window-rpc/utils'
 import { ALL_ENC_ALGORITHMS, makeWindowRpcOprfOperator, makeWindowRpcZkOperator } from 'src/window-rpc/window-rpc-zk'
 
@@ -22,13 +23,15 @@ const VALID_MODULES = [
 	'witness-sdk'
 ]
 
-let logger = makeLogger(true)
+let logger = LOGGER
 
 /**
  * Sets up the current window to listen for RPC requests
  * from React Native or other windows
  */
 export function setupWindowRpc() {
+	logger = makeLogger(true)
+
 	window.addEventListener('message', handleMessage, false)
 	const windowMsgs = new EventTarget()
 
@@ -89,7 +92,10 @@ export function setupWindowRpc() {
 					oprfOperators: getOprfOperators(
 						req.request.zkOperatorMode, req.request.zkEngine
 					),
-					client: { url: defaultUrl },
+					client: {
+						url: defaultUrl,
+						authRequest: req.request.authRequest
+					},
 					logger,
 					onStep(step) {
 						sendMessage({
@@ -147,6 +153,41 @@ export function setupWindowRpc() {
 					response: avsRes,
 				})
 				break
+			case 'createClaimOnMechain':
+				const mechainRes = await createClaimOnMechain({
+					...req.request,
+					context: req.request.context
+						? JSON.parse(req.request.context)
+						: undefined,
+					zkOperators: getZkOperators(
+						req.request.zkOperatorMode, req.request.zkEngine
+					),
+					oprfOperators: getOprfOperators(
+						req.request.zkOperatorMode, req.request.zkEngine
+					),
+					client: {
+						url: defaultUrl,
+					},
+					logger,
+					onStep(step) {
+						sendMessage({
+							type: 'createClaimOnMechainStep',
+							step,
+							module: req.module,
+							id: req.id,
+						})
+					},
+				})
+				const claimResponses: CreateClaimResponse[] = []
+				for(let i = 0; i < mechainRes.responses.length; i++) {
+					claimResponses[i] = mapToCreateClaimResponse(mechainRes.responses[i])
+				}
+
+				respond({
+					type: 'createClaimOnMechainDone',
+					response: { taskId: mechainRes.taskId, data: claimResponses },
+				})
+				break
 			case 'extractHtmlElement':
 				respond({
 					type: 'extractHtmlElementDone',
@@ -156,6 +197,7 @@ export function setupWindowRpc() {
 						req.request.contentsOnly
 					),
 				})
+
 				break
 			case 'extractJSONValueIndex':
 				respond({

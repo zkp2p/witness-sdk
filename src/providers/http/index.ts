@@ -1,7 +1,8 @@
-import { concatenateUint8Arrays, strToUint8Array, TLSConnectionOptions } from '@reclaimprotocol/tls'
+import { areUint8ArraysEqual, concatenateUint8Arrays, strToUint8Array, TLSConnectionOptions } from '@reclaimprotocol/tls'
 import { utils } from 'ethers'
 import { base64 } from 'ethers/lib/utils'
 import { DEFAULT_HTTPS_PORT, RECLAIM_USER_AGENT } from 'src/config'
+import { AttestorVersion } from 'src/proto/api'
 import {
 	buildHeaders,
 	convertResponsePosToAbsolutePos,
@@ -11,10 +12,10 @@ import {
 	matchRedactedStrings,
 	parseHttpResponse,
 } from 'src/providers/http/utils'
-import { ArraySlice, Provider, ProviderParams, ProviderSecretParams, RedactedOrHashedArraySlice } from 'src/types'
+import { ArraySlice, Provider, ProviderCtx, ProviderParams, ProviderSecretParams, RedactedOrHashedArraySlice } from 'src/types'
 import {
 	findIndexInUint8Array,
-	getHttpRequestDataFromTranscript,
+	getHttpRequestDataFromTranscript, logger,
 	REDACTION_CHAR_CODE,
 	uint8ArrayToBinaryStr,
 	uint8ArrayToStr,
@@ -35,9 +36,9 @@ const HTTP_PROVIDER: Provider<'http'> = {
 			? params.writeRedactionMode
 			: undefined
 	},
-	geoLocation(params) {
+	geoLocation(params, secretParams) {
 		return ('geoLocation' in params)
-			? getGeoLocation(params)
+			? getGeoLocation(params, secretParams)
 			: undefined
 	},
 	additionalClientOptions(params): TLSConnectionOptions {
@@ -152,7 +153,7 @@ const HTTP_PROVIDER: Provider<'http'> = {
 			redactions: redactions,
 		}
 	},
-	getResponseRedactions(response, rawParams, logger) {
+	getResponseRedactions({ response, params: rawParams, logger, ctx }) {
 		logger.debug({ response:base64.encode(response), params:rawParams })
 
 		const res = parseHttpResponse(response)
@@ -180,6 +181,20 @@ const HTTP_PROVIDER: Provider<'http'> = {
 		const reveals: RedactedOrHashedArraySlice[] = [
 			{ fromIndex: 0, toIndex: headerEndIndex }
 		]
+
+		//reveal double CRLF which separates headers from body
+		if(shouldRevealCrlf(ctx)) {
+			const crlfs = response
+				.slice(res.headerEndIdx, res.headerEndIdx + 4)
+			if(!areUint8ArraysEqual(crlfs, strToUint8Array('\r\n\r\n'))) {
+				logger.error({ response: uint8ArrayToBinaryStr(response) })
+				throw new Error(
+					`Failed to find header/body separator at index ${res.headerEndIdx}`
+				)
+			}
+		}
+
+		reveals.push({ fromIndex:res.headerEndIdx, toIndex:res.headerEndIdx + 4 })
 
 		//reveal date header
 		if(res.headerIndices['date']) {
@@ -225,7 +240,7 @@ const HTTP_PROVIDER: Provider<'http'> = {
 
 		return redactions
 	},
-	assertValidProviderReceipt(receipt, paramsAny, logger) {
+	assertValidProviderReceipt({ receipt, params: paramsAny, logger, ctx }) {
 		logTranscript()
 		let extractedParams: { [_: string]: string } = {}
 		const secretParams = ('secretParams' in paramsAny)
@@ -273,9 +288,11 @@ const HTTP_PROVIDER: Provider<'http'> = {
 		const response = concatArrays(...serverBlocks)
 
 		let res: string
-		let bodyStart = OK_HTTP_HEADER.length
 		res = uint8ArrayToStr(response)
-		if(!res.startsWith(OK_HTTP_HEADER)) {
+
+		const okRegex = makeRegex('^HTTP\\/1.1 2\\d{2}')
+		const matchRes = okRegex.exec(res)
+		if(!matchRes) {
 			const statusRegex = makeRegex('^HTTP\\/1.1 (\\d{3})')
 			const matchRes = statusRegex.exec(res)
 			if(matchRes && matchRes.length > 1) {
@@ -294,10 +311,19 @@ const HTTP_PROVIDER: Provider<'http'> = {
 			}
 
 			throw new Error(
-				`Response did not start with "${OK_HTTP_HEADER}" got "${res.slice(0, lineEnd)}"`
+				`Response did not start with \"HTTP/1.1 2XX\" got "${res.slice(0, lineEnd)}"`
 			)
 		}
 
+		let bodyStart: number
+		if(shouldRevealCrlf(ctx)) {
+			bodyStart = res.indexOf('\r\n\r\n', OK_HTTP_HEADER.length) + 4
+			if(bodyStart < 4) {
+				throw new Error('Response body start not found')
+			}
+		} else {
+			bodyStart = OK_HTTP_HEADER.length
+		}
 
 		//validate server Date header if present
 		const dateHeader = makeRegex(dateHeaderRegex).exec(res)
@@ -311,8 +337,6 @@ const HTTP_PROVIDER: Provider<'http'> = {
 					`Server date is off by "${(Date.now() - serverDate.getTime()) / 1000} s"`
 				)
 			}
-
-			bodyStart = dateHeader.index + dateHeader[0].length
 		}
 
 
@@ -323,6 +347,7 @@ const HTTP_PROVIDER: Provider<'http'> = {
 		if(paramBody.length > 0 && !matchRedactedStrings(paramBody, req.body)) {
 			throw new Error('request body mismatch')
 		}
+
 
 		//remove asterisks to account for chunks in the middle of revealed strings
 		if(!secretParams) {
@@ -403,6 +428,12 @@ const HTTP_PROVIDER: Provider<'http'> = {
 			logger.debug({ request: clientTranscript, response:serverTranscript, params:paramsAny })
 		}
 	},
+}
+
+// revealing CRLF is a breaking change -- and should only be done
+// if the client's version supports it
+function shouldRevealCrlf({ version }: ProviderCtx) {
+	return version >= AttestorVersion.ATTESTOR_VERSION_2_0_1
 }
 
 function getHostPort(params: ProviderParams<'http'>, secretParams: ProviderSecretParams<'http'>) {
@@ -494,14 +525,15 @@ function *processRedactionRequest(
 	}
 
 	function *processRegexp() {
+		logger.debug({ element: base64.encode(strToUint8Array(element)), body: base64.encode(strToUint8Array(body)) })
 		const regexp = makeRegex(rs.regex!)
 		const elem = element || body
 		const match = regexp.exec(elem)
 		// eslint-disable-next-line max-depth
 		if(!match?.[0]) {
-			// logger.error({ response: uint8ArrayToBinaryStr(res.body) })
+
 			throw new Error(
-				`regexp ${rs.regex} does not match found element '${elem}'`
+				`regexp ${rs.regex} does not match found element '${base64.encode(strToUint8Array(elem))}'`
 			)
 		}
 
@@ -509,12 +541,19 @@ function *processRedactionRequest(
 		elementLength = regexp.lastIndex - match.index
 		element = match[0]
 
+		if(rs.hash && (!match.groups || Object.keys(match.groups).length > 1)) {
+			throw new Error(
+				'Exactly one named capture group is needed per hashed redaction'
+			)
+		}
+
 		// if there are groups in the regex,
 		// we'll only hash the group values
 		if(!rs.hash || !match.groups) {
 			yield *addRedaction()
 			return
 		}
+
 
 		const fullStr = match[0]
 		const grp = Object.values(match.groups)[0] as string
@@ -723,7 +762,7 @@ function substituteParamValues(
 	}
 }
 
-function getGeoLocation(v2Params: HTTPProviderParams) {
+function getGeoLocation(v2Params: HTTPProviderParams, secretParams?: ProviderSecretParams<'http'>) {
 	if(v2Params?.geoLocation) {
 		const paramNames: Set<string> = new Set()
 		let geo = v2Params.geoLocation
@@ -737,9 +776,16 @@ function getGeoLocation(v2Params: HTTPProviderParams) {
 		for(const pn of paramNames) {
 			if(v2Params.paramValues && pn in v2Params.paramValues) {
 				geo = geo?.replaceAll(`{{${pn}}}`, v2Params.paramValues[pn].toString())
+			} else if(secretParams?.paramValues && pn in secretParams.paramValues) {
+				geo = geo?.replaceAll(`{{${pn}}}`, secretParams.paramValues[pn].toString())
 			} else {
 				throw new Error(`parameter "${pn}" value not found in templateParams`)
 			}
+		}
+
+		const geoRegex = /^[A-Za-z]{2}$/sgiu
+		if(!geoRegex.test(geo)) {
+			throw new Error(`Geolocation ${geo} is invalid`)
 		}
 
 		return geo

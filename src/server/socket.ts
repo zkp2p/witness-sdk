@@ -1,8 +1,9 @@
-import { IncomingMessage } from 'http'
 import { handleMessage } from 'src/client/utils/message-handler'
+import { TunnelMessage } from 'src/proto/api'
 import { HANDLERS } from 'src/server/handlers'
+import { getApm } from 'src/server/utils/apm'
 import { getInitialMessagesFromQuery } from 'src/server/utils/generics'
-import { IAttestorServerSocket, Logger, RPCEvent, RPCHandler } from 'src/types'
+import { AcceptNewConnectionOpts, BGPListener, IAttestorServerSocket, Logger, RPCEvent, RPCHandler } from 'src/types'
 import { AttestorError, generateSessionId } from 'src/utils'
 import { AttestorSocket } from 'src/utils/socket-base'
 import { promisify } from 'util'
@@ -12,7 +13,12 @@ export class AttestorServerSocket extends AttestorSocket implements IAttestorSer
 
 	tunnels: IAttestorServerSocket['tunnels'] = {}
 
-	private constructor(socket: WS, public sessionId: number, logger: Logger) {
+	private constructor(
+		socket: WS,
+		public sessionId: number,
+		public bgpListener: BGPListener | undefined,
+		logger: Logger
+	) {
 		// @ts-ignore
 		super(socket, {}, logger)
 		// handle RPC requests
@@ -24,7 +30,7 @@ export class AttestorServerSocket extends AttestorSocket implements IAttestorSer
 		this.addEventListener('connection-terminated', () => {
 			for(const tunnelId in this.tunnels) {
 				const tunnel = this.tunnels[tunnelId]
-				tunnel.close(new Error('WS session terminated'))
+				void tunnel.close(new Error('WS session terminated'))
 			}
 		})
 	}
@@ -41,10 +47,13 @@ export class AttestorServerSocket extends AttestorSocket implements IAttestorSer
 		return tunnel
 	}
 
+	removeTunnel(tunnelId: TunnelMessage['tunnelId']): void {
+		delete this.tunnels[tunnelId]
+	}
+
 	static async acceptConnection(
 		socket: WS,
-		req: IncomingMessage,
-		logger: Logger
+		{ req, logger, bgpListener }: AcceptNewConnectionOpts
 	) {
 		// promisify ws.send -- so the sendMessage method correctly
 		// awaits the send operation
@@ -54,7 +63,9 @@ export class AttestorServerSocket extends AttestorSocket implements IAttestorSer
 		const sessionId = generateSessionId()
 		logger = logger.child({ sessionId })
 
-		const client = new AttestorServerSocket(socket, sessionId, logger)
+		const client = new AttestorServerSocket(
+			socket, sessionId, bgpListener, logger
+		)
 		try {
 			const initMsgs = getInitialMessagesFromQuery(req)
 			logger.trace(
@@ -69,7 +80,7 @@ export class AttestorServerSocket extends AttestorSocket implements IAttestorSer
 		} catch(err) {
 			logger.error({ err }, 'error in new connection')
 			if(client.isOpen) {
-				client.terminateConnection(
+				await client.terminateConnection(
 					err instanceof AttestorError
 						? err
 						: AttestorError.badRequest(err.message)
@@ -109,16 +120,33 @@ async function handleRpcRequest(
 		rpc: type,
 		requestId
 	})
+
+	const apm = getApm()
+	const tx = apm?.startTransaction(type)
+	tx?.setLabel('requestId', requestId)
+	tx?.setLabel('sessionId', this.sessionId.toString())
+
+	const userId = this.metadata.auth?.data?.id
+	if(userId) {
+		tx?.setLabel('authUserId', userId)
+	}
+
 	try {
 		logger.debug({ data }, 'handling RPC request')
 
 		const handler = HANDLERS[type] as RPCHandler<typeof type>
-		const res = await handler(data, { client: this, logger })
-		await respond(res)
+		const res = await handler(data, { client: this, logger, tx })
+		respond(res)
 
 		logger.debug({ res }, 'handled RPC request')
+		tx?.setOutcome('success')
 	} catch(err) {
 		logger.error({ err }, 'error in RPC request')
 		respond(AttestorError.fromError(err))
+		tx?.setOutcome('failure')
+
+		apm?.captureError(err, { parent: tx })
+	} finally {
+		tx?.end()
 	}
 }

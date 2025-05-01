@@ -4,13 +4,17 @@ import { API_SERVER_PORT, BROWSER_RPC_PATHNAME, WS_PATHNAME } from 'src/config'
 import { AttestorServerSocket } from 'src/server/socket'
 import { getAttestorAddress } from 'src/server/utils/generics'
 import { addKeepAlive } from 'src/server/utils/keep-alive'
+import { BGPListener } from 'src/types'
 import { logger as LOGGER } from 'src/utils'
+import { createBgpListener } from 'src/utils/bgp-listener'
 import { getEnvVariable } from 'src/utils/env'
 import { SelectedServiceSignatureType } from 'src/utils/signatures'
+import { promisifySend } from 'src/utils/ws'
 import type { Duplex } from 'stream'
 import { WebSocket, WebSocketServer } from 'ws'
 
 const PORT = +(getEnvVariable('PORT') || API_SERVER_PORT)
+const DISABLE_BGP_CHECKS = getEnvVariable('DISABLE_BGP_CHECKS') === '1'
 
 /**
  * Creates the WebSocket API server,
@@ -23,6 +27,9 @@ export async function createServer(port = PORT) {
 		'browser',
 		{ index: ['index.html'] }
 	)
+	const bgpListener = !DISABLE_BGP_CHECKS
+		? createBgpListener(LOGGER.child({ service: 'bgp-listener' }))
+		: undefined
 
 	const wss = new WebSocketServer({ noServer: true })
 	http.on('upgrade', handleUpgrade.bind(wss))
@@ -56,7 +63,7 @@ export async function createServer(port = PORT) {
 		http.once('error', reject)
 	})
 
-	wss.on('connection', handleNewClient)
+	wss.on('connection', (ws, req) => handleNewClient(ws, req, bgpListener))
 
 	LOGGER.info(
 		{
@@ -73,14 +80,22 @@ export async function createServer(port = PORT) {
 	const wssClose = wss.close.bind(wss)
 	wss.close = (cb) => {
 		wssClose(() => http.close(cb))
+		bgpListener?.close()
 	}
 
 	return wss
 }
 
-async function handleNewClient(ws: WebSocket, req: IncomingMessage) {
-	const client = await AttestorServerSocket
-		.acceptConnection(ws, req, LOGGER)
+async function handleNewClient(
+	ws: WebSocket,
+	req: IncomingMessage,
+	bgpListener: BGPListener | undefined
+) {
+	promisifySend(ws)
+	const client = await AttestorServerSocket.acceptConnection(
+		ws,
+		{ req, bgpListener, logger: LOGGER }
+	)
 	// if initialisation fails, don't store the client
 	if(!client) {
 		return

@@ -17,9 +17,14 @@ export class AttestorClient extends AttestorSocket implements IAttestorClient {
 		initMessages = [],
 		signatureType = DEFAULT_METADATA.signatureType,
 		logger = LOGGER,
+		authRequest,
 		makeWebSocket = defaultMakeWebSocket
 	}: IAttestorClientCreateOpts) {
-		const initRequest = { ...DEFAULT_METADATA, signatureType }
+		const initRequest = {
+			...DEFAULT_METADATA,
+			signatureType,
+			auth: authRequest
+		}
 		const msg = packRpcMessages({ initRequest }, ...initMessages)
 		const initRequestBytes = RPCMessages.encode(msg).finish()
 		const initRequestB64 = base64.encode(initRequestBytes)
@@ -41,6 +46,10 @@ export class AttestorClient extends AttestorSocket implements IAttestorClient {
 				this.isInitialised = true
 				this.initResponse = res
 			})
+		// swallow the error if anything bad happens, and we've no
+		// catch block to handle it
+		this.waitForInitPromise
+			.catch(() => { })
 
 		this.addEventListener('connection-terminated', ev => (
 			logger.info({ err: ev.data }, 'connection terminated')
@@ -51,11 +60,19 @@ export class AttestorClient extends AttestorSocket implements IAttestorClient {
 		type: T,
 		request: Partial<RPCRequestData<T>>
 	) {
-		const {
-			messages: [{ id }]
-		} = await this.sendMessage({ [getRpcRequestType(type)]: request })
-		const rslt = await this.waitForResponse<T>(id)
-		return rslt
+		this.logger.debug({ type }, 'sending rpc request')
+		const now = Date.now()
+		try {
+			const {
+				messages: [{ id }]
+			} = await this.sendMessage({ [getRpcRequestType(type)]: request })
+			const rslt = await this.waitForResponse<T>(id)
+
+			return rslt
+		} finally {
+			const timeTakenMs = Date.now() - now
+			this.logger.debug({ type, timeTakenMs }, 'received rpc response')
+		}
 	}
 
 	waitForResponse<T extends RPCType>(id: number) {

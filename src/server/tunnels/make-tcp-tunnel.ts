@@ -1,9 +1,9 @@
-import { resolve, setServers } from 'dns'
 import { HttpsProxyAgent } from 'https-proxy-agent'
 import type { ConnectResponse } from 'https-proxy-agent/dist/parse-proxy-response'
 import { Socket } from 'net'
-import { CONNECTION_TIMEOUT_MS, DNS_SERVERS } from 'src/config'
+import { CONNECTION_TIMEOUT_MS } from 'src/config'
 import { CreateTunnelRequest } from 'src/proto/api'
+import { resolveHostnames } from 'src/server/utils/dns'
 import { isValidCountryCode } from 'src/server/utils/iso'
 import type { Logger } from 'src/types'
 import type { MakeTunnelFn, TCPSocketProperties } from 'src/types'
@@ -36,14 +36,24 @@ export const makeTcpTunnel: MakeTunnelFn<ExtraOpts, TCPSocketProperties> = async
 	const transcript: TCPSocketProperties['transcript'] = []
 	const socket = await connectTcp({ ...opts, logger })
 
-	socket.once('error', close)
-	socket.once('end', () => close(undefined))
+	let closed = false
+
+
 	socket.on('data', message => {
+		if(closed) {
+			logger.warn('socket is closed, dropping message')
+			return
+		}
+
 		onMessage?.(message)
 		transcript.push({ sender: 'server', message })
 	})
 
+	socket.once('error', onSocketClose)
+	socket.once('close', () => onSocketClose(undefined))
+
 	return {
+		socket,
 		transcript,
 		createRequest: opts,
 		async write(data) {
@@ -58,25 +68,28 @@ export const makeTcpTunnel: MakeTunnelFn<ExtraOpts, TCPSocketProperties> = async
 				})
 			})
 		},
-		close,
+		close(err?: Error) {
+			if(closed) {
+				return
+			}
+
+			socket.destroy(err)
+		}
 	}
 
-	function close(error?: Error) {
-		if(socket.readableEnded) {
+	function onSocketClose(err?: Error) {
+		if(closed) {
 			return
 		}
 
-		logger.debug({ err: error }, 'closing socket')
+		logger.debug({ err }, 'closing socket')
 
-		socket.end(() => {
-			// Do nothing
-		})
-		onClose?.(error)
+		closed = true
+
+		onClose?.(err)
 		onClose = undefined
 	}
 }
-
-setDnsServers()
 
 async function connectTcp({ host, port, geoLocation, logger }: ExtraOpts) {
 	let connectTimeout: NodeJS.Timeout | undefined
@@ -236,24 +249,4 @@ async function _getSocket(
 	})
 
 	return proxySocket
-}
-
-async function resolveHostnames(hostname: string) {
-	return new Promise<string[]>((_resolve, reject) => {
-		resolve(hostname, (err, addresses) => {
-			if(err) {
-				reject(
-					new Error(
-						`Could not resolve hostname: ${hostname}, ${err.message}`
-					)
-				)
-			} else {
-				_resolve(addresses)
-			}
-		})
-	})
-}
-
-function setDnsServers() {
-	setServers(DNS_SERVERS)
 }

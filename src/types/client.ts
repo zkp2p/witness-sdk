@@ -1,4 +1,6 @@
-import type { InitRequest, InitResponse, RPCMessage, RPCMessages, ServiceSignatureType, TunnelMessage } from 'src/proto/api'
+import type { IncomingMessage } from 'http'
+import type { AuthenticationRequest, InitRequest, InitResponse, RPCMessage, RPCMessages, ServiceSignatureType, TunnelMessage } from 'src/proto/api'
+import type { BGPListener } from 'src/types/bgp'
 import type { Logger } from 'src/types/general'
 import type { RPCEvent, RPCEventMap, RPCEventType, RPCRequestData, RPCResponseData, RPCType } from 'src/types/rpc'
 import type { TCPSocketProperties, Tunnel } from 'src/types/tunnel'
@@ -12,11 +14,33 @@ export type AnyWebSocket = WebSocket | WSWebSocket
 
 export type MakeWebSocket = (url: string | URL) => AnyWebSocket
 
+export type AcceptNewConnectionOpts = {
+	req: IncomingMessage
+	logger: Logger
+	bgpListener?: BGPListener
+}
+
+export type IAttestorClientInitParams = {
+	/**
+	 * Attestor WS URL
+	 */
+	url: string | URL
+	/**
+	 * If the attestor being connected to has authentication
+	 * enabled, provide the authentication request here, or a
+	 * function that will return the authentication request.
+	 */
+	authRequest?: AuthenticationRequest
+		| (() => Promise<AuthenticationRequest>)
+}
+
 export type IAttestorClientCreateOpts = {
 	/**
 	 * Attestor WS URL
 	 */
 	url: string | URL
+
+	authRequest?: AuthenticationRequest
 
 	signatureType?: ServiceSignatureType
 
@@ -125,6 +149,10 @@ export declare class IAttestorServerSocket extends IAttestorSocket {
 	 * If the tunnel does not exist, it will throw an error.
 	 */
 	getTunnel(tunnelId: TunnelMessage['tunnelId']): Tunnel<TCPSocketProperties>
+
+	removeTunnel(tunnelId: TunnelMessage['tunnelId']): void
+
+	bgpListener?: BGPListener
 }
 
 export declare class IAttestorClient extends IAttestorSocket {
@@ -159,6 +187,10 @@ interface WebSocketWithServerSocket {
 	 * Our RPC socket instance
 	 */
 	serverSocket?: IAttestorServerSocket
+	/**
+	 * Just promisified send
+	 */
+	sendPromise?: (data: Uint8Array) => Promise<void>
 }
 
 declare module 'ws' {

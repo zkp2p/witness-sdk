@@ -1,7 +1,7 @@
 import { strToUint8Array, TLSPacketContext } from '@reclaimprotocol/tls'
 import { makeRpcTlsTunnel } from 'src/client/tunnels/make-rpc-tls-tunnel'
 import { getAttestorClientFromPool } from 'src/client/utils/attestor-pool'
-import { DEFAULT_HTTPS_PORT, TOPRF_DOMAIN_SEPARATOR } from 'src/config'
+import { DEFAULT_HTTPS_PORT, PROVIDER_CTX, TOPRF_DOMAIN_SEPARATOR } from 'src/config'
 import { ClaimTunnelRequest, ZKProofEngine } from 'src/proto/api'
 import { providers } from 'src/providers'
 import type {
@@ -14,6 +14,7 @@ import type {
 } from 'src/types'
 import {
 	AttestorError,
+	binaryHashToStr,
 	canonicalStringify,
 	generateTunnelId,
 	getBlocksToReveal,
@@ -26,6 +27,7 @@ import {
 	preparePacketsForReveal,
 	redactSlices,
 	RevealedSlices,
+	uint8ArrayToStr,
 	unixTimestampSeconds
 } from 'src/utils'
 import { executeWithRetries } from 'src/utils/retries'
@@ -71,6 +73,7 @@ function shouldRetry(err: Error) {
 	return err instanceof AttestorError
 		&& err.code !== 'ERROR_INVALID_CLAIM'
 		&& err.code !== 'ERROR_BAD_REQUEST'
+		&& err.code !== 'ERROR_AUTHENTICATION_FAILED'
 }
 
 async function _createClaimOnAttestor<N extends ProviderName>(
@@ -85,12 +88,13 @@ async function _createClaimOnAttestor<N extends ProviderName>(
 		logger = LOGGER,
 		timestampS,
 		updateProviderParams,
+		updateParametersFromOprfData = true,
 		...zkOpts
 	}: CreateClaimOnAttestorOpts<N>
 ) {
 	const provider = providers[name]
 	const hostPort = getProviderValue(params, provider.hostPort, secretParams)
-	const geoLocation = getProviderValue(params, provider.geoLocation)
+	const geoLocation = getProviderValue(params, provider.geoLocation, secretParams)
 	const providerTlsOpts = getProviderValue(
 		params,
 		provider.additionalClientOptions
@@ -121,9 +125,17 @@ async function _createClaimOnAttestor<N extends ProviderName>(
 		id: generateTunnelId()
 	}
 
+	const authRequest = 'authRequest' in clientInit
+		? (
+			typeof clientInit.authRequest === 'function'
+				? await clientInit.authRequest()
+				: clientInit.authRequest
+		)
+		: undefined
+
 	const tunnel = await makeRpcTlsTunnel({
 		tlsOpts,
-		connect: (initMessages) => {
+		connect: (connectMsgs) => {
 			let created = false
 			if('metadata' in clientInit) {
 				client = clientInit
@@ -132,7 +144,11 @@ async function _createClaimOnAttestor<N extends ProviderName>(
 					clientInit.url,
 					() => {
 						created = true
-						return { initMessages, logger }
+						return {
+							authRequest: authRequest,
+							initMessages: connectMsgs,
+							logger
+						}
 					}
 				)
 			}
@@ -140,7 +156,7 @@ async function _createClaimOnAttestor<N extends ProviderName>(
 			if(!created) {
 				client
 					.waitForInit()
-					.then(() => client.sendMessage(...initMessages))
+					.then(() => client.sendMessage(...connectMsgs))
 					.catch(err => {
 						logger.error(
 							{ err },
@@ -259,6 +275,8 @@ async function _createClaimOnAttestor<N extends ProviderName>(
 		clientIV = clientBlock.message.fixedIv
 	}
 
+	const transcript = await generateTranscript()
+
 	// now that we have the full transcript, we need
 	// to generate the ZK proofs & send them to the attestor
 	// to verify & sign our claim
@@ -271,7 +289,7 @@ async function _createClaimOnAttestor<N extends ProviderName>(
 			timestampS: timestampS ?? unixTimestampSeconds(),
 			owner: getAddress(),
 		},
-		transcript: await generateTranscript(),
+		transcript:transcript,
 		zkEngine: zkEngine === 'gnark'
 			? ZKProofEngine.ZK_ENGINE_GNARK
 			: ZKProofEngine.ZK_ENGINE_SNARKJS,
@@ -450,17 +468,19 @@ async function _createClaimOnAttestor<N extends ProviderName>(
 		if(provider.getResponseRedactions) {
 			serverPacketsToReveal = await getBlocksToReveal(
 				serverBlocks,
-				total => provider.getResponseRedactions!(
-					total,
+				total => provider.getResponseRedactions!({
+					response: total,
 					params,
-					logger
-				),
+					logger,
+					ctx: PROVIDER_CTX
+				}),
 				performOprf
 			)
 		}
 
 		const revealedPackets: Transcript<Uint8Array> = packets
 			.filter(p => p.sender === 'client')
+
 		if(serverPacketsToReveal === 'all') {
 			// reveal all server side blocks
 			for(const { message, sender } of allPackets) {
@@ -480,19 +500,32 @@ async function _createClaimOnAttestor<N extends ProviderName>(
 				revealedPackets.push(
 					{ sender: 'server', message: redactedPlaintext }
 				)
+				if(updateParametersFromOprfData && toprfs) {
+					let strParams = canonicalStringify(params)
+					for(const toprf of toprfs) {
+						strParams = strParams.replaceAll(uint8ArrayToStr(toprf.plaintext), binaryHashToStr(
+							toprf.nullifier,
+							toprf.dataLocation!.length
+						))
+					}
+
+					params = JSON.parse(strParams)
+				}
+
 			}
 		}
 
-		await provider.assertValidProviderReceipt(
-			revealedPackets,
-			{
+		await provider.assertValidProviderReceipt({
+			receipt: revealedPackets,
+			params: {
 				...params,
 				// provide secret params for proper
 				// request body validation
 				secretParams,
 			},
-			logger
-		)
+			logger,
+			ctx: PROVIDER_CTX
+		})
 
 		// reveal all handshake blocks
 		// so the attestor can verify there was no
@@ -540,7 +573,8 @@ async function _createClaimOnAttestor<N extends ProviderName>(
 			nullifier,
 			responses: [res],
 			mask: reqData.mask,
-			dataLocation: undefined
+			dataLocation: undefined,
+			plaintext
 		}
 
 		return data
@@ -560,4 +594,5 @@ async function _createClaimOnAttestor<N extends ProviderName>(
 		const pubKey = getPublicKey(ownerPrivateKey)
 		return getAddress(pubKey)
 	}
+
 }

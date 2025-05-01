@@ -15,10 +15,10 @@ export type PrepareZKProofsBaseOpts = {
 	 * @default 10
 	 */
 	zkProofConcurrency?: number
-	maxZkChunks?: number
 	zkEngine?: ZKEngine
 }
 
 export type TOPRFProofParams = TOPRFPayload & {
 	mask: Uint8Array
+	plaintext: Uint8Array
 }
