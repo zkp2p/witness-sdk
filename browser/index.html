@@ -49,6 +49,9 @@
 		if (window.location.search.includes('track-memory-usage=true')) {
 			trackMemoryUsage()
 		}
+
+		// Add this to set the log level to debug
+		module.exports.setLogLevel('debug', true)
 	</script>
 </head>
 
