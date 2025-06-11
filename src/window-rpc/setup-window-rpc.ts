@@ -81,7 +81,7 @@ export function setupWindowRpc() {
 
 			switch (req.type) {
 			case 'createClaim':
-				logger.info({ 
+				logger.debug({ 
 					zkEngine: req.request.zkEngine, 
 					zkOperatorMode: req.request.zkOperatorMode 
 				}, 'processing createClaim with ZK settings')
@@ -120,7 +120,7 @@ export function setupWindowRpc() {
 						? updateProviderParams
 						: undefined
 				})
-				console.log('claimTunnelRes', claimTunnelRes)
+				logger.debug({ claimTunnelRes }, 'claimTunnelRes1234')
 				const response = mapToCreateClaimResponse(
 					claimTunnelRes
 				)
