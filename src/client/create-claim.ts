@@ -305,7 +305,9 @@ async function _createClaimOnAttestor<N extends ProviderName>(
 		.sign(claimTunnelBytes, ownerPrivateKey)
 	claimTunnelReq.signatures = { requestSignature }
 
+	logger.debug({ claimTunnelReq }, 'claimTunnelReq1234')
 	const result = await client!.rpc('claimTunnel', claimTunnelReq)
+	logger.debug({ result }, 'result1234')
 
 	logger.info({ success: !!result.claim }, 'recv claim response')
 
