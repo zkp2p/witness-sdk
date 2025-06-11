@@ -216,6 +216,8 @@ export async function decryptTranscript(
 	clientIV: Uint8Array,
 ): Promise<IDecryptedTranscript> {
 
+	logger.info({ zkEngine }, 'starting transcript decryption with ZK engine')
+
 	const { tlsVersion, cipherSuite, hostname, nextMsgIndex } = await processHandshake(transcript, logger)
 
 	let clientRecordNumber = tlsVersion === 'TLS1_3' ? -1 : 0 // TLS 1.3 has already one record encrypted at this point

@@ -374,8 +374,19 @@ export async function verifyZkPacket(
 	await Promise.all(
 		proofs.map(async(proof, i) => {
 			try {
+				logger?.debug({ 
+					proofIndex: i, 
+					startIdx: proof.startIdx,
+					proofDataLength: proof.proofData?.length,
+					hasProofJson: !!proof.proofJson,
+				}, 'verifying ZK proof')
 				await verifyProofPacket(proof)
 			} catch(e) {
+				logger?.error({ 
+					proofIndex: i, 
+					startIdx: proof.startIdx,
+					error: e.message 
+				}, 'proof verification failed')
 				e.message += ` (chunk ${i}, startIdx ${proof.startIdx})`
 				throw e
 			}
