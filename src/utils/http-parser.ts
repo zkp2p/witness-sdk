@@ -178,7 +178,8 @@ export function makeHttpResponseParser() {
 			}
 
 			if(remainingBodyBytes > 0) {
-				throw new Error('stream ended before all body bytes were received')
+				console.warn('stream ended before all body bytes were received, continuing anyway')
+				// Allow MercadoPago responses with incorrect Content-Length
 			}
 
 			res.complete = true
