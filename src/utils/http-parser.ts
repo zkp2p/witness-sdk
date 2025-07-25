@@ -178,7 +178,7 @@ export function makeHttpResponseParser() {
 			}
 
 			if(remainingBodyBytes > 0) {
-				console.warn('stream ended before all body bytes were received, continuing anyway')
+				throw new Error('stream ended before all body bytes were received')
 			}
 
 			res.complete = true
