@@ -179,7 +179,7 @@ async function _createClaimOnAttestor<N extends ProviderName>(
 				// finished writing the response
 				setTimeout(() => {
 					endedHttpRequest?.()
-				}, 100)
+				}, 1000)
 			}
 		},
 		onClose(err) {
